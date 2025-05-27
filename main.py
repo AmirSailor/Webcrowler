@@ -1,16 +1,50 @@
 import threading
 from queue import Queue
-from spider import spider
+from spider import Spider
 from domain import *
-from General import *
+from general import *
 
-
-Project_name = input('Please Write a Name for Your Project: ')
-Home_page = input('Please insert the home page URL (e.g. http://example.com/) ')
-Domain_name = get_domain(Home_page)
-Queue_file = Project_name + '/queue.txt'
-Crawled_file = Project_name = Project_name + '/crawled.txt'
-Number_of_threads = input('Enter Number of Threads you can handle: ')
-
+PROJECT_NAME = 'Gisma'
+HOMEPAGE = 'https://gisma.com'
+DOMAIN_NAME = get_domain_name(HOMEPAGE)
+QUEUE_FILE = PROJECT_NAME + '/queue.txt'
+CRAWLED_FILE = PROJECT_NAME + '/crawled.txt'
+NUMBER_OF_THREADS = 8
 queue = Queue()
-spider(Project_name, Home_page, Domain_name)
+Spider(PROJECT_NAME, HOMEPAGE, DOMAIN_NAME)
+
+
+# Create worker threads (will die when main exits)
+def create_workers():
+    for _ in range(NUMBER_OF_THREADS):
+        t = threading.Thread(target=work)
+        t.daemon = True
+        t.start()
+
+
+# Do the next job in the queue
+def work():
+    while True:
+        url = queue.get()
+        Spider.crawl_page(threading.current_thread().name, url)
+        queue.task_done()
+
+
+# Each queued link is a new job
+def create_jobs():
+    for link in file_to_set(QUEUE_FILE):
+        queue.put(link)
+    queue.join()
+    crawl()
+
+
+# Check if there are items in the queue, if so crawl them
+def crawl():
+    queued_links = file_to_set(QUEUE_FILE)
+    if len(queued_links) > 0:
+        print(str(len(queued_links)) + ' links in the queue')
+        create_jobs()
+
+
+create_workers()
+crawl()
