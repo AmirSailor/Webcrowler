@@ -1,10 +1,12 @@
 from urllib.request import urlopen
-from link_finder import linkfinder
-from General import *
+from link_finder import LinkFinder
+from domain import *
+from general import *
+from bs4 import BeautifulSoup
 
-class spider:
-    #class variables among all instances
-    project_name = '' 
+class Spider:
+
+    project_name = ''
     base_url = ''
     domain_name = ''
     queue_file = ''
@@ -13,58 +15,73 @@ class spider:
     crawled = set()
 
     def __init__(self, project_name, base_url, domain_name):
-        spider.project_name = project_name
-        spider.base_url = base_url
-        spider.domain_name = domain_name
-        spider.queue_file = spider.project_name + '/queue.txt'
-        spider.crawled_file = spider.project_name + '/crawled.txt'
+        Spider.project_name = project_name
+        Spider.base_url = base_url
+        Spider.domain_name = domain_name
+        Spider.queue_file = Spider.project_name + '/queue.txt'
+        Spider.crawled_file = Spider.project_name + '/crawled.txt'
         self.boot()
-        self.crawl_page('firstone(spider)', spider.base_url)
-    
+        self.crawl_page('First spider', Spider.base_url)
+
+    # Creates directory and files for project on first run and starts the spider
     @staticmethod
     def boot():
-        create_proj_dir(spider.project_name)
-        creat_data_file(spider.project_name, spider.base_url)
-        spider.queue = file_to_set(spider.queue_file)
-        spider.crawled = file_to_set(spider.crawled_file)
-    
+        create_project_dir(Spider.project_name)
+        create_data_files(Spider.project_name, Spider.base_url)
+        Spider.queue = file_to_set(Spider.queue_file)
+        Spider.crawled = file_to_set(Spider.crawled_file)
+
+    # Updates user display, fills queue and updates files
     @staticmethod
     def crawl_page(thread_name, page_url):
-        if page_url not in spider.crawled:
-            print(thread_name + ' actuel time is crawling ' + page_url)
-            print('Queue ' + str(len(spider.queue)) + ' // Crowled ' + str(len(spider.crawled)))
-            spider.add_links_to_queue(spider.gather_link(page_url))
-            spider.queue.remove(page_url)
-            spider.crawled.add(page_url)
-            spider.update_files()
+        if page_url not in Spider.crawled:
+            print(thread_name + ' now crawling ' + page_url)
+            print('Queue ' + str(len(Spider.queue)) + ' | Crawled  ' + str(len(Spider.crawled)))
+            Spider.add_links_to_queue(Spider.gather_links(page_url))
+            Spider.queue.remove(page_url)
+            Spider.crawled.add(page_url)
+            Spider.update_files()
 
+    # Converts raw response data into readable information and checks for proper html formatting
     @staticmethod
     def gather_links(page_url):
         html_string = ''
         try:
             response = urlopen(page_url)
-            if response.getheader('Content-Type') == 'text/html':
+            if 'text/html' in response.getheader('Content-Type'):
                 html_bytes = response.read()
                 html_string = html_bytes.decode("utf-8")
-            finder = linkfinder(spider.base_url, page_url)
+            finder = LinkFinder(Spider.base_url, page_url)
             finder.feed(html_string)
-        except: 
-            print('error can\'t crawl page')
+            Spider.extract_and_store_data(page_url, html_string)
+
+        except Exception as e:
+            print(str(e))
             return set()
         return finder.page_links()
     
     @staticmethod
+    def extract_and_store_data(page_url, html_string):
+        try:
+            soup = BeautifulSoup(html_string, 'html.parser')
+            title = soup.title.string if soup.title else 'No Title'
+            text = soup.get_text(separator=' ', strip=True)
+            data = f"URL: {page_url}\nTitle: {title}\nText: {text}\n{'-'*80}\n"
+            append_to_file(Spider.project_name + '/data.txt', data)  # Save to data.txt
+        except Exception as e:
+            print(f"Error extracting data from {page_url}: {str(e)}")
+
+    # Saves queue data to project files
+    @staticmethod
     def add_links_to_queue(links):
         for url in links:
-            if url in spider.queue:
+            if (url in Spider.queue) or (url in Spider.crawled):
                 continue
-            if url in spider.crawled:
+            if Spider.domain_name != get_domain_name(url):
                 continue
-            if spider.domain_name not in url:
-                continue
-            spider.queue.add(url)
+            Spider.queue.add(url)
 
     @staticmethod
     def update_files():
-        set_to_file(spider.queue, spider.queue_file)
-        set_to_file(spider.crawled, spider.crawled_file)
+        set_to_file(Spider.queue, Spider.queue_file)
+        set_to_file(Spider.crawled, Spider.crawled_file)
