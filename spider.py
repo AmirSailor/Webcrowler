@@ -3,6 +3,7 @@ from link_finder import LinkFinder
 from domain import *
 from general import *
 from bs4 import BeautifulSoup
+from exclude import EXCLUDE_TAGS, EXCLUDE_CLASSES
 
 class Spider:
 
@@ -64,10 +65,21 @@ class Spider:
     def extract_and_store_data(page_url, html_string):
         try:
             soup = BeautifulSoup(html_string, 'html.parser')
+
+            # Remove unwanted tags
+            for tag in EXCLUDE_TAGS:
+                for element in soup.find_all(tag):
+                    element.decompose()
+
+            # Remove elements by class name
+            for class_name in EXCLUDE_CLASSES:
+                for element in soup.find_all(class_=lambda x: x and class_name in x):
+                    element.decompose()
+
             title = soup.title.string if soup.title else 'No Title'
             text = soup.get_text(separator=' ', strip=True)
             data = f"URL: {page_url}\nTitle: {title}\nText: {text}\n{'-'*80}\n"
-            append_to_file(Spider.project_name + '/data.txt', data)  # Save to data.txt
+            append_to_file(Spider.project_name + '/data.txt', data)
         except Exception as e:
             print(f"Error extracting data from {page_url}: {str(e)}")
 
