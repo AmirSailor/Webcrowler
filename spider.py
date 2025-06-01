@@ -3,7 +3,8 @@ from link_finder import LinkFinder
 from domain import *
 from general import *
 from bs4 import BeautifulSoup
-from exclude import EXCLUDE_TAGS, EXCLUDE_CLASSES
+from config import EXCLUDE_TAGS, EXCLUDE_CLASSES
+from summerize import generate_summary
 
 class Spider:
 
@@ -78,7 +79,7 @@ class Spider:
 
             title = soup.title.string if soup.title else 'No Title'
             text = soup.get_text(separator=' ', strip=True)
-            data = f"URL: {page_url}\nTitle: {title}\nText: {text}\n{'-'*80}\n"
+            data = f"URL: {page_url}\nTitle: {title}\nText: {text}\nSummary: {generate_summary(text)}{'-'*80}\n"
             append_to_file(Spider.project_name + '/data.txt', data)
         except Exception as e:
             print(f"Error extracting data from {page_url}: {str(e)}")
