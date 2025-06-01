@@ -3,13 +3,16 @@ from queue import Queue
 from spider import Spider
 from domain import *
 from general import *
+from config import Project_name_c, Home_page_c, Number_of_threads_c
 
-PROJECT_NAME = '#your projects name here'
-HOMEPAGE = 'Web Address Here'
+PROJECT_NAME = Project_name_c
+HOMEPAGE = Home_page_c
 DOMAIN_NAME = get_domain_name(HOMEPAGE)
 QUEUE_FILE = PROJECT_NAME + '/queue.txt'
 CRAWLED_FILE = PROJECT_NAME + '/crawled.txt'
-NUMBER_OF_THREADS = 8
+NUMBER_OF_THREADS = Number_of_threads_c
+
+
 queue = Queue()
 Spider(PROJECT_NAME, HOMEPAGE, DOMAIN_NAME)
 
