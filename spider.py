@@ -4,7 +4,7 @@ from domain import *
 from general import *
 from bs4 import BeautifulSoup
 from config import EXCLUDE_TAGS, EXCLUDE_CLASSES
-from summerize import generate_summary
+from summerizer import generate_summary
 
 class Spider:
 
