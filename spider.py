@@ -3,8 +3,9 @@ from link_finder import LinkFinder
 from domain import *
 from general import *
 from bs4 import BeautifulSoup
-from config import EXCLUDE_TAGS, EXCLUDE_CLASSES
-from summerizer import generate_summary
+from config import EXCLUDE_TAGS, EXCLUDE_CLASSES, Summery_Mode
+from summerize import generate_summary
+import json
 
 class Spider:
 
@@ -79,8 +80,32 @@ class Spider:
 
             title = soup.title.string if soup.title else 'No Title'
             text = soup.get_text(separator=' ', strip=True)
-            data = f"URL: {page_url}\nTitle: {title}\nText: {text}\nSummary: {generate_summary(text)}{'-'*80}\n"
-            append_to_file(Spider.project_name + '/data.txt', data)
+
+            # save to a .json file, instead of .txt file.
+            data_entry = {
+            "url": page_url,
+            "title": title,
+            "text": text,
+            }
+
+            if Summery_Mode:
+                data_entry["summary"] = generate_summary(text)
+
+            json_file_path = Spider.project_name + '/data.json'
+
+            try:
+                with open(json_file_path, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                    if not isinstance(existing_data, list): # Ensure it's a list for appending
+                        existing_data = [existing_data] # Convert if it's a single object
+            except (FileNotFoundError, json.JSONDecodeError):
+                existing_data = [] # Start with an empty list if file doesn't exist or is invalid
+
+            existing_data.append(data_entry)
+
+            with open(json_file_path, 'w', encoding='utf-8') as f:
+                json.dump(existing_data, f, ensure_ascii=False, indent=4)
+
         except Exception as e:
             print(f"Error extracting data from {page_url}: {str(e)}")
 
