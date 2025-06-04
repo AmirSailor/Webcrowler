@@ -25,3 +25,6 @@ Period_27B_Gemma = 14400
 Models_available = ['gemini-1.5-flash', 'gemma-3-27b-it']
 Model = "gemma-3-27b-it"
 # input('please enter one of these models gemma-3-27b-it or gemini-1.5-flash: \n')
+
+Summery_Mode = False
+# input('Do you want to Summarize the data? (True/False): \n')
