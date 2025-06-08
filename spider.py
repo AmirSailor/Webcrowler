@@ -7,9 +7,9 @@ from config import EXCLUDE_TAGS, EXCLUDE_CLASSES, Summery_Mode
 from summerize import generate_summary
 import json
 from datetime import datetime
-import re # Make sure 're' is imported for regex operations
-import os # Make sure 'os' is imported for path operations
-import traceback # Make sure 'traceback' is imported for detailed error logging
+import re 
+import os 
+import traceback 
 
 # --- Helper function for date parsing (should be outside the class or a static method) ---
 def parse_date_string(date_string):
@@ -125,6 +125,7 @@ class Spider:
             # Strategy 1: Look for <time> tags (most reliable if present)
             time_tag = soup.find('time')
             if time_tag:
+                strategy = 1
                 date_str = time_tag.get('datetime')
                 if date_str:
                     post_date = date_str
@@ -139,6 +140,7 @@ class Spider:
                     # Call the global helper function
                     parsed_dt = parse_date_string(found_date_text)
                     if parsed_dt:
+                        strategy = 2
                         post_date = parsed_dt.isoformat()
                         break
 
@@ -155,6 +157,7 @@ class Spider:
                         parsed_dt = parse_date_string(date_str)
                         if parsed_dt:
                             post_date = parsed_dt.isoformat()
+                            strategy = 3
                             break
 
             # Strategy 4: Search for common date patterns within the main text (less reliable)
@@ -173,6 +176,7 @@ class Spider:
                         # Call the global helper function
                         parsed_dt = parse_date_string(found_date_text)
                         if parsed_dt:
+                            strategy = 4
                             post_date = parsed_dt.isoformat()
                             break
 
@@ -182,7 +186,8 @@ class Spider:
                 "url": page_url,
                 "title": title,
                 "text": text,
-                "date": post_date if post_date else "NO Date"
+                "date": post_date if post_date else "NO Date",
+                "date_strategy": strategy if 'strategy' in locals() else "No Strategy",
             }
 
             if Summery_Mode:
