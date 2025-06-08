@@ -6,6 +6,42 @@ from bs4 import BeautifulSoup
 from config import EXCLUDE_TAGS, EXCLUDE_CLASSES, Summery_Mode
 from summerize import generate_summary
 import json
+from datetime import datetime
+import re # Make sure 're' is imported for regex operations
+import os # Make sure 'os' is imported for path operations
+import traceback # Make sure 'traceback' is imported for detailed error logging
+
+# --- Helper function for date parsing (should be outside the class or a static method) ---
+def parse_date_string(date_string):
+    """
+    Attempts to parse a date string into a datetime object.
+    You'll likely need to expand this with more formats based on your data.
+    """
+    formats = [
+        "%Y-%m-%dT%H:%M:%S%z", # ISO 8601 with timezone (e.g., from <time datetime>)
+        "%Y-%m-%d",          # YYYY-MM-DD
+        "%B %d, %Y",         # Month Day, Year (e.g., January 1, 2023)
+        "%d %B %Y",         # Day Month Year (e.g., 1 January 2023)
+        "%m/%d/%Y",          # MM/DD/YYYY
+        "%d/%m/%Y",          # DD/MM/YYYY
+        "%Y/%m/%d",          # YYYY/MM/DD
+        "%b %d, %Y",         # Abbreviated Month Day, Year (e.g., Jan 1, 2023)
+        "%A, %B %d, %Y",     # Weekday, Month Day, Year (e.g., Friday, June 7, 2025)
+        "%B %d, %Y %H:%M:%S", # Month Day, Year HH:MM:SS (e.g., June 7, 2025 10:30:00)
+        "%m/%d/%Y %H:%M:%S",  # MM/DD/YYYY HH:MM:SS
+        # Add more formats as you encounter them on different websites
+    ]
+    for fmt in formats:
+        try:
+            # For formats with timezone, handle if it's not always present
+            if '%z' in fmt and ('+' not in date_string and '-' not in date_string[-6:]):
+                # If timezone is expected but not in string, try without it
+                return datetime.strptime(date_string.strip(), fmt.replace('%z', ''))
+            return datetime.strptime(date_string.strip(), fmt)
+        except ValueError:
+            continue
+    # print(f"Could not parse date string: '{date_string}'") # Uncomment for debugging unparsed dates
+    return None
 
 class Spider:
 
@@ -59,10 +95,12 @@ class Spider:
             Spider.extract_and_store_data(page_url, html_string)
 
         except Exception as e:
-            print(str(e))
+            print(f"Error gathering links from {page_url}: {str(e)}")
+            traceback.print_exc() # Print full traceback for debugging
             return set()
         return finder.page_links()
-    
+
+    # --- Corrected extract_and_store_data method ---
     @staticmethod
     def extract_and_store_data(page_url, html_string):
         try:
@@ -81,25 +119,88 @@ class Spider:
             title = soup.title.string if soup.title else 'No Title'
             text = soup.get_text(separator=' ', strip=True)
 
-            # save to a .json file, instead of .txt file.
+            # --- Date Extraction Logic ---
+            post_date = None
+
+            # Strategy 1: Look for <time> tags (most reliable if present)
+            time_tag = soup.find('time')
+            if time_tag:
+                date_str = time_tag.get('datetime')
+                if date_str:
+                    post_date = date_str
+                else:
+                    post_date = time_tag.get_text(strip=True)
+
+            # Strategy 2: Look for specific classes/IDs (customize these heavily)
+            if not post_date:
+                date_elements = soup.find_all(class_=['date', 'post-date', 'published', 'entry-date', 'article-date'])
+                for elem in date_elements:
+                    found_date_text = elem.get_text(strip=True)
+                    # Call the global helper function
+                    parsed_dt = parse_date_string(found_date_text)
+                    if parsed_dt:
+                        post_date = parsed_dt.isoformat()
+                        break
+
+            # Strategy 3: Look in meta tags
+            if not post_date:
+                meta_date_tags = soup.find_all('meta', attrs={
+                    'property': ['article:published_time', 'og:pubdate'],
+                    'name': ['date', 'pubdate', 'DC.date.issued', 'last_updated']
+                })
+                for tag in meta_date_tags:
+                    date_str = tag.get('content')
+                    if date_str:
+                        # Call the global helper function
+                        parsed_dt = parse_date_string(date_str)
+                        if parsed_dt:
+                            post_date = parsed_dt.isoformat()
+                            break
+
+            # Strategy 4: Search for common date patterns within the main text (less reliable)
+            if not post_date:
+                date_patterns = [
+                    r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}\b',
+                    r'\b\d{1,2}/\d{1,2}/\d{2,4}\b',
+                    r'\b\d{4}-\d{2}-\d{2}\b',
+                    r'\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}\b',
+                    r'\b(?:Published|Posted|Last updated):\s*(\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4})\b'
+                ]
+                for pattern in date_patterns:
+                    match = re.search(pattern, text, re.IGNORECASE)
+                    if match:
+                        found_date_text = match.group(1) if len(match.groups()) > 0 else match.group(0)
+                        # Call the global helper function
+                        parsed_dt = parse_date_string(found_date_text)
+                        if parsed_dt:
+                            post_date = parsed_dt.isoformat()
+                            break
+
+            # --- End Date Extraction Logic ---
+
             data_entry = {
-            "url": page_url,
-            "title": title,
-            "text": text,
+                "url": page_url,
+                "title": title,
+                "text": text,
+                "date": post_date if post_date else "NO Date"
             }
 
             if Summery_Mode:
                 data_entry["summary"] = generate_summary(text)
 
-            json_file_path = Spider.project_name + '/data.json'
+            project_dir = Spider.project_name
+            if not os.path.exists(project_dir):
+                os.makedirs(project_dir)
+
+            json_file_path = os.path.join(project_dir, 'data.json')
 
             try:
                 with open(json_file_path, 'r', encoding='utf-8') as f:
                     existing_data = json.load(f)
-                    if not isinstance(existing_data, list): # Ensure it's a list for appending
-                        existing_data = [existing_data] # Convert if it's a single object
+                    if not isinstance(existing_data, list):
+                        existing_data = [existing_data]
             except (FileNotFoundError, json.JSONDecodeError):
-                existing_data = [] # Start with an empty list if file doesn't exist or is invalid
+                existing_data = []
 
             existing_data.append(data_entry)
 
@@ -107,7 +208,9 @@ class Spider:
                 json.dump(existing_data, f, ensure_ascii=False, indent=4)
 
         except Exception as e:
-            print(f"Error extracting data from {page_url}: {str(e)}")
+            print(f"Error extracting or storing data from {page_url}: {str(e)}")
+            traceback.print_exc()
+            return None
 
     # Saves queue data to project files
     @staticmethod
