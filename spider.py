@@ -5,11 +5,12 @@ from general import *
 from bs4 import BeautifulSoup
 from config import EXCLUDE_TAGS, EXCLUDE_CLASSES, Summery_Mode
 from summerize import generate_summary
-import json
+import json # Still needed if you use generate_summary or other json tasks, but not for storing data
 from datetime import datetime
-import re 
-import os 
-import traceback 
+import re
+import os
+import traceback
+import sqlite3 # Import the sqlite3 module
 
 # --- Helper function for date parsing (should be outside the class or a static method) ---
 def parse_date_string(date_string):
@@ -40,8 +41,66 @@ def parse_date_string(date_string):
             return datetime.strptime(date_string.strip(), fmt)
         except ValueError:
             continue
-    # print(f"Could not parse date string: '{date_string}'") # Uncomment for debugging unparsed dates
     return None
+
+# --- New Helper Function for Database Operations ---
+def create_database_table(project_name):
+    db_file_path = os.path.join(project_name, f'{project_name}.db')
+    conn = None
+    try:
+        conn = sqlite3.connect(db_file_path)
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS pages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT UNIQUE,
+                title TEXT,
+                text TEXT,
+                date TEXT,
+                date_strategy TEXT,
+                summary TEXT
+            )
+        ''')
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Database error during table creation: {e}")
+        traceback.print_exc()
+    finally:
+        if conn:
+            conn.close()
+
+def insert_page_data(project_name, data):
+    db_file_path = os.path.join(project_name, f'{project_name}.db')
+    conn = None
+    try:
+        conn = sqlite3.connect(db_file_path)
+        c = conn.cursor()
+
+        # Handle 'None' for summary if Summery_Mode is False
+        summary_data = data.get('summary') if Summery_Mode else None
+
+        c.execute('''
+            INSERT OR IGNORE INTO pages (url, title, text, date, date_strategy, summary)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            data['url'],
+            data['title'],
+            data['text'],
+            data['date'],
+            data['date_strategy'],
+            summary_data
+        ))
+        conn.commit()
+    except sqlite3.Error as e:
+        # Check if the error is due to a UNIQUE constraint violation (duplicate URL)
+        if "UNIQUE constraint failed: pages.url" in str(e):
+            print(f"Skipping duplicate URL: {data['url']}")
+        else:
+            print(f"Database error during data insertion for {data['url']}: {e}")
+            traceback.print_exc()
+    finally:
+        if conn:
+            conn.close()
 
 class Spider:
 
@@ -52,6 +111,7 @@ class Spider:
     crawled_file = ''
     queue = set()
     crawled = set()
+    db_file = '' # New attribute for database file path
 
     def __init__(self, project_name, base_url, domain_name):
         Spider.project_name = project_name
@@ -59,6 +119,7 @@ class Spider:
         Spider.domain_name = domain_name
         Spider.queue_file = Spider.project_name + '/queue.txt'
         Spider.crawled_file = Spider.project_name + '/crawled.txt'
+        Spider.db_file = os.path.join(Spider.project_name, f'{Spider.project_name}.db') # Define DB path
         self.boot()
         self.crawl_page('First spider', Spider.base_url)
 
@@ -67,6 +128,7 @@ class Spider:
     def boot():
         create_project_dir(Spider.project_name)
         create_data_files(Spider.project_name, Spider.base_url)
+        create_database_table(Spider.project_name) # Call to create the database table
         Spider.queue = file_to_set(Spider.queue_file)
         Spider.crawled = file_to_set(Spider.crawled_file)
 
@@ -100,7 +162,7 @@ class Spider:
             return set()
         return finder.page_links()
 
-    # --- Corrected extract_and_store_data method ---
+    # --- Modified extract_and_store_data method for SQL storage ---
     @staticmethod
     def extract_and_store_data(page_url, html_string):
         try:
@@ -121,27 +183,27 @@ class Spider:
 
             # --- Date Extraction Logic ---
             post_date = None
+            strategy = "No Strategy" # Initialize strategy here
 
             # Strategy 1: Look for <time> tags (most reliable if present)
             time_tag = soup.find('time')
             if time_tag:
-                strategy = 1
                 date_str = time_tag.get('datetime')
                 if date_str:
                     post_date = date_str
                 else:
                     post_date = time_tag.get_text(strip=True)
+                strategy = 1
 
             # Strategy 2: Look for specific classes/IDs (customize these heavily)
             if not post_date:
                 date_elements = soup.find_all(class_=['date', 'post-date', 'published', 'entry-date', 'article-date'])
                 for elem in date_elements:
                     found_date_text = elem.get_text(strip=True)
-                    # Call the global helper function
                     parsed_dt = parse_date_string(found_date_text)
                     if parsed_dt:
-                        strategy = 2
                         post_date = parsed_dt.isoformat()
+                        strategy = 2
                         break
 
             # Strategy 3: Look in meta tags
@@ -153,7 +215,6 @@ class Spider:
                 for tag in meta_date_tags:
                     date_str = tag.get('content')
                     if date_str:
-                        # Call the global helper function
                         parsed_dt = parse_date_string(date_str)
                         if parsed_dt:
                             post_date = parsed_dt.isoformat()
@@ -173,44 +234,27 @@ class Spider:
                     match = re.search(pattern, text, re.IGNORECASE)
                     if match:
                         found_date_text = match.group(1) if len(match.groups()) > 0 else match.group(0)
-                        # Call the global helper function
                         parsed_dt = parse_date_string(found_date_text)
                         if parsed_dt:
-                            strategy = 4
                             post_date = parsed_dt.isoformat()
+                            strategy = 4
                             break
 
             # --- End Date Extraction Logic ---
 
-            data_entry = {
+            # Prepare data for SQL insertion
+            # SQLite stores dates as TEXT or REAL (Unix epoch). ISO format is good for text.
+            data_to_store = {
                 "url": page_url,
                 "title": title,
                 "text": text,
                 "date": post_date if post_date else "NO Date",
-                "date_strategy": strategy if 'strategy' in locals() else "No Strategy",
+                "date_strategy": str(strategy), # Ensure strategy is a string for SQL TEXT type
+                "summary": generate_summary(text) if Summery_Mode else None # Ensure None if no summary
             }
 
-            if Summery_Mode:
-                data_entry["summary"] = generate_summary(text)
-
-            project_dir = Spider.project_name
-            if not os.path.exists(project_dir):
-                os.makedirs(project_dir)
-
-            json_file_path = os.path.join(project_dir, 'data.json')
-
-            try:
-                with open(json_file_path, 'r', encoding='utf-8') as f:
-                    existing_data = json.load(f)
-                    if not isinstance(existing_data, list):
-                        existing_data = [existing_data]
-            except (FileNotFoundError, json.JSONDecodeError):
-                existing_data = []
-
-            existing_data.append(data_entry)
-
-            with open(json_file_path, 'w', encoding='utf-8') as f:
-                json.dump(existing_data, f, ensure_ascii=False, indent=4)
+            # --- Store data in SQLite ---
+            insert_page_data(Spider.project_name, data_to_store)
 
         except Exception as e:
             print(f"Error extracting or storing data from {page_url}: {str(e)}")
