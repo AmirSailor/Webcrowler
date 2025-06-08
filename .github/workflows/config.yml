@@ -4,6 +4,8 @@
 project_name:  # From Project_name_c
 homepage_url:  # From Home_page_c
 domain_name:  # Ensure this matches your homepage_url's domain
+# Database Settings (keeping these from previous example)
+database_filename: 
 
 # Exclusions for Content Parsing
 # These lists are directly moved from your EXCLUDE_TAGS and EXCLUDE_CLASSES
@@ -59,9 +61,6 @@ api_settings:
 # Anti-Blocking Measures (keeping these from previous example)
 min_delay_seconds: 1.5
 max_delay_seconds: 4.0
-
-# Database Settings (keeping these from previous example)
-database_filename: scraped_data.db
 
 # Anti-Blocking Measures
 min_delay_seconds: 1.5 # Minimum random delay between requests
