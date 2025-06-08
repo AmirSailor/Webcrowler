@@ -1,7 +1,7 @@
-🕸️ Configurable Multi-Threaded Web Crawler
+# 🕸️ Configurable Multi-Threaded Web Crawler
 A robust, multi-threaded web crawler designed for efficient data extraction from websites. This crawler allows you to configure target URLs, crawling behavior, data parsing, and even integrates with AI models for content summarization, all managed through a simple YAML configuration file.
 
-✨ Features
+# ✨ Features
 Multi-threaded Crawling: Utilizes multiple threads for faster concurrent page fetching.
 Dynamic Configuration: All core settings (homepage URL, project name, thread count, exclusions, API details) are managed via config.yml.
 Robots.txt Adherence: Automatically checks and respects robots.txt rules to ensure ethical crawling.
@@ -23,16 +23,15 @@ Clone the repository:
 
 Bash
 
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
-cd YOUR_REPO_NAME
-(Replace YOUR_USERNAME and YOUR_REPO_NAME with your actual GitHub details).
+git clone https://github.com/AmirSailor/Webcrowler.git
+cd Webcrowler
 
 Install dependencies:
 
 Bash
 
 pip install -r requirements.txt
-(You'll need a requirements.txt file. If you don't have one, create it with: pip freeze > requirements.txt after installing bs4, PyYAML, python-dotenv, google-generativeai).
+
 
 Configuration
 The crawler is highly configurable via two main files:
@@ -41,14 +40,15 @@ config.yml: This file contains all the crawler's operational settings.
 
 Create a file named config.yml in the root directory of your project.
 Populate it with your desired settings. Here's an example:
+
 YAML
 
 # Crawler Configuration
 
 # Project and Target Settings
-project_name: MyAwesomeCrawler # Your project directory name
-homepage_url: https://www.example.com/ # The starting URL for crawling
-domain_name: example.com # The base domain to restrict crawling to
+project_name: MyAwesomeCrawler 
+homepage_url: https://www.example.com/
+domain_name: example.com 
 
 # Exclusions for Content Parsing
 exclude_tags:
@@ -65,7 +65,7 @@ exclude_classes:
   # ... add more classes to exclude ...
 
 # Data Extraction Features
-summary_mode: true # Set to 'true' to enable AI summarization of content
+summary_mode: True # Set to 'true' to enable AI summarization of content
 
 # Performance Settings
 number_of_threads: 8 # Number of concurrent crawling threads
@@ -117,7 +117,7 @@ Set up an SQLite database (scraped_data.db) within the project directory.
 Start multi-threaded crawling from the homepage_url specified in config.yml.
 Extract data, apply summarization (if enabled), and store it in the database.
 Continue crawling new links found on pages until the queue is empty.
-📂 Project Structure
+# 📂 Project Structure
 main.py: The entry point of the crawler, responsible for loading configuration, initializing the spider, and managing the crawling process.
 spider.py: Contains the core Spider class, handling page fetching, link gathering, data extraction, and storage. It interacts with the config for all operational settings.
 link_finder.py: Parses HTML content to find links.
@@ -127,5 +127,5 @@ general.py: General utility functions (e.g., file_to_set, set_to_file, create_pr
 config.yml: Your primary configuration file for crawler settings.
 .env: Stores sensitive API keys.
 requirements.txt: Lists all Python dependencies.
-🤝 Contributing
+# 🤝 Contributing
 Feel free to fork this repository, open issues, or submit pull requests. Any contributions to improve the crawler's functionality, efficiency, or robustness are welcome!
