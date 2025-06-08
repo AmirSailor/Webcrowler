@@ -1,55 +1,51 @@
-from urllib.request import urlopen, Request # Make sure Request is imported
-from urllib.robotparser import RobotFileParser # New import 
+from urllib.request import urlopen, Request
+from urllib.robotparser import RobotFileParser
 from link_finder import LinkFinder
-from User_agents import USER_AGENTS
 from domain import *
 from general import *
 from bs4 import BeautifulSoup
-from config import EXCLUDE_TAGS, EXCLUDE_CLASSES, Summery_Mode
 from summerize import generate_summary
-import json
 from datetime import datetime
 import re
 import os
 import traceback
 import sqlite3
-import random # For User-Agent rotation and delays
-import time # For delays
+import random
+import time
+import sys # For error handling in robots.txt fallback
 
-# --- Helper function for date parsing (should be outside the class or a static method) ---
+
+# --- Helper function for date parsing (no changes needed here) ---
 def parse_date_string(date_string):
     """
     Attempts to parse a date string into a datetime object.
-    You'll likely need to expand this with more formats based on your data.
     """
     formats = [
-        "%Y-%m-%dT%H:%M:%S%z", # ISO 8601 with timezone (e.g., from <time datetime>)
-        "%Y-%m-%d",          # YYYY-MM-DD
-        "%B %d, %Y",         # Month Day, Year (e.g., January 1, 2023)
-        "%d %B %Y",         # Day Month Year (e.g., 1 January 2023)
-        "%m/%d/%Y",          # MM/DD/YYYY
-        "%d/%m/%Y",          # DD/MM/YYYY
-        "%Y/%m/%d",          # YYYY/MM/DD
-        "%b %d, %Y",         # Abbreviated Month Day, Year (e.g., Jan 1, 2023)
-        "%A, %B %d, %Y",     # Weekday, Month Day, Year (e.g., Friday, June 7, 2025)
-        "%B %d, %Y %H:%M:%S", # Month Day, Year HH:MM:SS (e.g., June 7, 2025 10:30:00)
-        "%m/%d/%Y %H:%M:%S",  # MM/DD/YYYY HH:MM:SS
-        # Add more formats as you encounter them on different websites
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%d",
+        "%B %d, %Y",
+        "%d %B %Y",
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+        "%Y/%m/%d",
+        "%b %d, %Y",
+        "%A, %B %d, %Y",
+        "%B %d, %Y %H:%M:%S",
+        "%m/%d/%Y %H:%M:%S",
     ]
     for fmt in formats:
         try:
-            # For formats with timezone, handle if it's not always present
             if '%z' in fmt and ('+' not in date_string and '-' not in date_string[-6:]):
-                # If timezone is expected but not in string, try without it
                 return datetime.strptime(date_string.strip(), fmt.replace('%z', ''))
             return datetime.strptime(date_string.strip(), fmt)
         except ValueError:
             continue
     return None
 
-# --- New Helper Function for Database Operations ---
-def create_database_table(project_name):
-    db_file_path = os.path.join(project_name, f'{project_name}.db')
+# --- Updated Helper Functions for Database Operations ---
+# Now takes database_filename from config
+def create_database_table(project_name, database_filename):
+    db_file_path = os.path.join(project_name, database_filename)
     conn = None
     try:
         conn = sqlite3.connect(db_file_path)
@@ -73,15 +69,16 @@ def create_database_table(project_name):
         if conn:
             conn.close()
 
-def insert_page_data(project_name, data):
-    db_file_path = os.path.join(project_name, f'{project_name}.db')
+# Now takes database_filename and summary_mode_enabled from config
+def insert_page_data(project_name, database_filename, data, summary_mode_enabled):
+    db_file_path = os.path.join(project_name, database_filename)
     conn = None
     try:
         conn = sqlite3.connect(db_file_path)
         c = conn.cursor()
 
-        # Handle 'None' for summary if Summery_Mode is False
-        summary_data = data.get('summary') if Summery_Mode else None
+        # Handle 'None' for summary if summary_mode_enabled is False
+        summary_data = data.get('summary') if summary_mode_enabled else None
 
         c.execute('''
             INSERT OR IGNORE INTO pages (url, title, text, date, date_strategy, summary)
@@ -96,10 +93,8 @@ def insert_page_data(project_name, data):
         ))
         conn.commit()
     except sqlite3.Error as e:
-        # Check if the error is due to a UNIQUE constraint violation (duplicate URL)
         if "UNIQUE constraint failed: pages.url" in str(e):
-            # print(f"Skipping duplicate URL: {data['url']}") # Uncomment if you want to see this
-            pass # Keep quiet for expected duplicates
+            pass
         else:
             print(f"Database error during data insertion for {data['url']}: {e}")
             traceback.print_exc()
@@ -118,53 +113,60 @@ class Spider:
     queue = set()
     crawled = set()
     db_file = ''
-    robot_parser = None # New class attribute for RobotFileParser
+    robot_parser = None
+    config = {} # This will store the loaded config dictionary
 
-    def __init__(self, project_name, base_url, domain_name):
+    def __init__(self, project_name, base_url, domain_name, config):
         Spider.project_name = project_name
         Spider.base_url = base_url
         Spider.domain_name = domain_name
         Spider.queue_file = Spider.project_name + '/queue.txt'
-        Spider.crawled_file = Spider.project_name + '/crawled.txt' # Corrected this line as discussed
-        Spider.db_file = os.path.join(Spider.project_name, f'{Spider.project_name}.db')
+        Spider.crawled_file = Spider.project_name + '/crawled.txt'
+        # Get database_filename from config, with a fallback
+        Spider.db_file = os.path.join(Spider.project_name, config.get('database_filename', f'{project_name}.db'))
+        Spider.config = config # Store the entire config dictionary
         self.boot()
         self.crawl_page('First spider', Spider.base_url)
 
-    # Creates directory and files for project on first run and starts the spider
     @staticmethod
     def boot():
         create_project_dir(Spider.project_name)
         create_data_files(Spider.project_name, Spider.base_url)
-        create_database_table(Spider.project_name)
+        # Pass database_filename from config to the helper function
+        create_database_table(Spider.project_name, Spider.config.get('database_filename', f'{Spider.project_name}.db'))
 
-        # Initialize RobotFileParser
         Spider.robot_parser = RobotFileParser()
-        robots_url = get_domain_name(Spider.base_url) + '/robots.txt' # Construct robots.txt URL
-        # Ensure it's a full URL with scheme (http/https)
+        robots_url = get_domain_name(Spider.base_url) + '/robots.txt'
+
+        # Infer scheme from base_url or default to http
         if not (robots_url.startswith('http://') or robots_url.startswith('https://')):
-            robots_url = "http://" + robots_url # Default to http if missing
-            # A more robust solution might try both http and https, or derive from base_url's scheme
+            if Spider.base_url.startswith('https://'):
+                robots_url = "https://" + get_domain_name(Spider.base_url) + '/robots.txt'
+            else:
+                robots_url = "http://" + get_domain_name(Spider.base_url) + '/robots.txt'
 
         Spider.robot_parser.set_url(robots_url)
         try:
-            # Need to open the robots.txt file with custom headers as well
-            # to prevent it from blocking based on default user-agent
-            req = Request(robots_url, headers={'User-Agent': random.choice(USER_AGENTS)})
+            # Use USER_AGENTS from config for robots.txt request
+            user_agents_list = Spider.config.get('user_agents', [])
+            if not user_agents_list: # Fallback if user_agents are not defined in config
+                print("Warning: 'user_agents' not found in config.yml. Using a default user-agent for robots.txt.")
+                user_agents_list = ["Mozilla/5.0 (compatible; MyCrawler/1.0)"]
+
+            req = Request(robots_url, headers={'User-Agent': random.choice(user_agents_list)})
             response = urlopen(req)
             Spider.robot_parser.parse(response.read().decode("utf-8").splitlines())
             print(f"Successfully loaded robots.txt from: {robots_url}")
         except Exception as e:
-            print(f"Could not load or parse robots.txt from {robots_url}: {e}")
-            # If robots.txt cannot be loaded, the parser will assume everything is allowed,
-            # which might not be desired for strict adherence. You might want to
-            # set a flag here or handle this differently based on your policy.
+            print(f"Could not load or parse robots.txt from {robots_url}: {e}", file=sys.stderr) # Print to stderr
+            # If robots.txt fails, the parser will assume everything is allowed by default.
+            # You might want to log this heavily or stop if strict adherence is required.
             Spider.robot_parser = None # Indicate that parser failed to load
 
 
         Spider.queue = file_to_set(Spider.queue_file)
         Spider.crawled = file_to_set(Spider.crawled_file)
 
-    # Updates user display, fills queue and updates files
     @staticmethod
     def crawl_page(thread_name, page_url):
         if page_url not in Spider.crawled:
@@ -175,17 +177,23 @@ class Spider:
             Spider.crawled.add(page_url)
             Spider.update_files()
 
-    # Converts raw response data into readable information and checks for proper html formatting
     @staticmethod
     def gather_links(page_url):
         html_string = ''
         try:
-            # Random delay before making the request
-            time.sleep(random.uniform(1, 3)) # Wait between 1 and 3 seconds
+            # Get min/max delay from config
+            min_delay = Spider.config.get('min_delay_seconds', 1)
+            max_delay = Spider.config.get('max_delay_seconds', 3)
+            time.sleep(random.uniform(min_delay, max_delay))
 
-            # Prepare headers to mimic a browser
+            # Get USER_AGENTS list from config
+            user_agents_list = Spider.config.get('user_agents', [])
+            if not user_agents_list: # Fallback if user_agents are not defined in config
+                print("Warning: 'user_agents' not found in config.yml for requests. Using a default.")
+                user_agents_list = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"] # Default fallback
+
             headers = {
-                'User-Agent': random.choice(USER_AGENTS),
+                'User-Agent': random.choice(user_agents_list), # Use agent from config
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
                 'Connection': 'keep-alive',
@@ -193,9 +201,7 @@ class Spider:
                 'Cache-Control': 'max-age=0',
             }
 
-            # Create a Request object with the URL and headers
             req = Request(page_url, headers=headers)
-
             response = urlopen(req)
 
             if 'text/html' in response.getheader('Content-Type'):
@@ -211,30 +217,31 @@ class Spider:
             return set()
         return finder.page_links()
 
-    # --- Modified extract_and_store_data method for SQL storage ---
     @staticmethod
     def extract_and_store_data(page_url, html_string):
         try:
             soup = BeautifulSoup(html_string, 'html.parser')
 
-            # Remove unwanted tags
-            for tag in EXCLUDE_TAGS:
+            # Get EXCLUDE_TAGS from config
+            exclude_tags = Spider.config.get('exclude_tags', [])
+            for tag in exclude_tags:
                 for element in soup.find_all(tag):
                     element.decompose()
 
-            # Remove elements by class name
-            for class_name in EXCLUDE_CLASSES:
-                for element in soup.find_all(class_=lambda x: x and class_name in x):
+            # Get EXCLUDE_CLASSES from config
+            exclude_classes = Spider.config.get('exclude_classes', [])
+            for class_name in exclude_classes:
+                # Use lambda for class_ attribute to handle multiple classes
+                for element in soup.find_all(class_=lambda x: x and class_name in x.split()):
                     element.decompose()
 
             title = soup.title.string if soup.title else 'No Title'
             text = soup.get_text(separator=' ', strip=True)
 
-            # --- Date Extraction Logic ---
             post_date = None
-            strategy = "No Strategy" # Initialize strategy here
+            strategy = "No Strategy"
 
-            # Strategy 1: Look for <time> tags (most reliable if present)
+            # --- Date Extraction Logic (remains unchanged) ---
             time_tag = soup.find('time')
             if time_tag:
                 date_str = time_tag.get('datetime')
@@ -244,7 +251,6 @@ class Spider:
                     post_date = time_tag.get_text(strip=True)
                 strategy = 1
 
-            # Strategy 2: Look for specific classes/IDs (customize these heavily)
             if not post_date:
                 date_elements = soup.find_all(class_=['date', 'post-date', 'published', 'entry-date', 'article-date'])
                 for elem in date_elements:
@@ -255,7 +261,6 @@ class Spider:
                         strategy = 2
                         break
 
-            # Strategy 3: Look in meta tags
             if not post_date:
                 meta_date_tags = soup.find_all('meta', attrs={
                     'property': ['article:published_time', 'og:pubdate'],
@@ -270,7 +275,6 @@ class Spider:
                             strategy = 3
                             break
 
-            # Strategy 4: Search for common date patterns within the main text (less reliable)
             if not post_date:
                 date_patterns = [
                     r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}\b',
@@ -288,48 +292,50 @@ class Spider:
                             post_date = parsed_dt.isoformat()
                             strategy = 4
                             break
-
             # --- End Date Extraction Logic ---
 
             # Prepare data for SQL insertion
+            # Get Summery_Mode (summary_mode) from config
+            summary_mode_enabled = Spider.config.get('summary_mode', False)
+
             data_to_store = {
                 "url": page_url,
                 "title": title,
                 "text": text,
                 "date": post_date if post_date else "NO Date",
                 "date_strategy": str(strategy),
-                "summary": generate_summary(text) if Summery_Mode else None
+                "summary": generate_summary(text) if summary_mode_enabled else None
             }
 
-            # --- Store data in SQLite ---
-            insert_page_data(Spider.project_name, data_to_store)
+            # Pass database_filename and summary_mode_enabled to insert_page_data
+            insert_page_data(
+                Spider.project_name,
+                Spider.config.get('database_filename', f'{Spider.project_name}.db'),
+                data_to_store,
+                summary_mode_enabled
+            )
 
         except Exception as e:
             print(f"Error extracting or storing data from {page_url}: {str(e)}")
             traceback.print_exc()
             return None
 
-    # Saves queue data to project files
     @staticmethod
     def add_links_to_queue(links):
         for url in links:
-            # Skip if already in queue or crawled
             if (url in Spider.queue) or (url in Spider.crawled):
                 continue
-            # Skip if not in the same domain
             if Spider.domain_name != get_domain_name(url):
                 continue
 
-            # --- NEW: robots.txt check ---
-            if Spider.robot_parser: # Only check if parser was successfully loaded
-                # Pick a random user-agent to test with robots.txt
-                # This ensures the check is relevant to your crawling identity
-                if not Spider.robot_parser.can_fetch(random.choice(USER_AGENTS), url):
-                    # print(f"Skipping disallowed link by robots.txt: {url}") # Uncomment to see skipped links
-                    continue # Skip if robots.txt disallows it
-            else:
-                # If robots.txt failed to load, you might want to log a warning
-                pass 
+            if Spider.robot_parser:
+                # Get USER_AGENTS from config for robots.txt can_fetch check
+                user_agents_list = Spider.config.get('user_agents', [])
+                if not user_agents_list: # Fallback if user_agents are not defined in config
+                    user_agents_list = ["Mozilla/5.0 (compatible; MyCrawler/1.0)"] # Default fallback
+
+                if not Spider.robot_parser.can_fetch(random.choice(user_agents_list), url):
+                    continue
 
             Spider.queue.add(url)
 
